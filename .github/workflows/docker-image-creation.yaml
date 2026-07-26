@@ -106,7 +106,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ inputs.image_name }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ inputs.image_name }}
           tags: |
             type=raw,value=sha-${{ inputs.commit_id }}
 
