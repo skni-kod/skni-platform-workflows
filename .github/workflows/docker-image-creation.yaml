@@ -13,16 +13,17 @@ on:
         type: string
       dockerfile_path:
         description: 'Path to the Dockerfile within the repository (e.g., ./Dockerfile).'
-        required: true
+        required: false
+        default: 'Dockerfile'
         type: string
       push: 
         description: 'Whether to push the built image to the container registry. Set to false for Pull Request validation.'
-        required: true
+        required: false
         default: true
         type: boolean
       lint_dockerfile:
         description: 'Whether to run Hadolint to validate the Dockerfile before starting the build.'
-        required: true
+        required: false
         default: true
         type: boolean
       target:
@@ -92,10 +93,10 @@ jobs:
           verbose: true
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -103,14 +104,14 @@ jobs:
 
       - name: Extract metadata for image
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ inputs.image_name }}
           tags: |
             type=raw,value=sha-${{ inputs.commit_id }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           file: ${{ inputs.dockerfile_path }}
           push: ${{ inputs.push }}
