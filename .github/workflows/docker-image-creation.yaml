@@ -1,0 +1,125 @@
+name: Docker Image Creation Workflow
+
+on:
+  workflow_call:
+    inputs:
+      commit_id: 
+        description: 'Git commit SHA used for checking out the code and tagging the image (e.g., a1b2c3d).'
+        required: true 
+        type: string
+      image_name:
+        description: 'The target name or tag for the Docker image (e.g., my-microservice).'
+        required: true
+        type: string
+      dockerfile_path:
+        description: 'Path to the Dockerfile within the repository (e.g., ./Dockerfile).'
+        required: true
+        type: string
+      push: 
+        description: 'Whether to push the built image to the container registry. Set to false for Pull Request validation.'
+        required: true
+        default: true
+        type: boolean
+      lint_dockerfile:
+        description: 'Whether to run Hadolint to validate the Dockerfile before starting the build.'
+        required: true
+        default: true
+        type: boolean
+      target:
+        description: 'Target build stage to build for multi-stage Dockerfiles (e.g., production).'
+        required: false
+        type: string
+      build_args:
+        description: 'Additional build arguments passed to Docker, formatted as key=value pairs (one per line).'
+        required: false
+        type: string
+    secrets:
+      build_secrets:
+        description: 'Sensitive data (like NPM tokens) passed to the Docker build process using --mount=type=secret.'
+        required: false
+    outputs:
+      image_tag:
+        description: 'The final tag of the generated and pushed Docker image.'
+        value: ${{ jobs.build-and-push-image.outputs.image_tag }}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push-image:
+    runs-on: self-hosted
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit_id }}
+
+      - name: Validate input parameters
+        run: |
+          echo "Input parameters validation..."
+          
+          if [[ ! "${{ inputs.commit_id }}" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "::error title=Incorrect commit_id::Parameter commit_id ('${{ inputs.commit_id }}') has incorrect format. Required hash SHA."
+            exit 1
+          fi
+
+          if [[ ! "${{ inputs.image_name }}" =~ ^[a-z0-9_.-]+$ ]]; then
+            echo "::error title=Incorrect image name::Parameter image_name ('${{ inputs.image_name }}') is incorrect. Use only small case, numbers, hyphens and dots."
+            exit 1
+          fi
+
+          if [[ ! -f "${{ inputs.dockerfile_path }}" ]]; then
+            echo "::error title=No Dockerfile::Cannot find Dockerfile in path: '${{ inputs.dockerfile_path }}'"
+            exit 1
+          fi
+          
+          echo "All parameters are correct."
+
+      - name: Lint Dockerfile with Hadolint tool
+        if: ${{ inputs.lint_dockerfile }}
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ inputs.dockerfile_path }}
+          failure-threshold: warning
+          verbose: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for image
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ inputs.image_name }}
+          tags: |
+            type=raw,value=sha-${{ inputs.commit_id }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          file: ${{ inputs.dockerfile_path }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: ${{ inputs.target }}
+          build-args: ${{ inputs.build_args }}
+          secrets: ${{ secrets.build_secrets }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
