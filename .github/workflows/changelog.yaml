@@ -2,13 +2,15 @@ name: Changelog / Release (reusable)
 
 # Generates a changelog between the previous build/* tag and the given (or
 # auto-detected latest) build/* tag, then creates a GitHub Release. Commit
-# messages are listed as-is – no Conventional Commits required.
+# messages are listed as-is (no Conventional Commits required). The release
+# notes include a "Full Changelog" link that compares the previous and current
+# tag, so clicking the tag shows what changed between the two.
 
 on:
   workflow_call:
     inputs:
       tag:
-        description: 'Tag to generate the changelog for (e.g. build/2026.08.14.1). Auto-detected if omitted.'
+        description: 'Tag to generate changelog for (e.g. build/2026.08.14.1). Auto-detected if omitted.'
         required: false
         type: string
       release_name:
@@ -38,74 +40,69 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve target tag
-        id: resolve
+      - name: Fetch tags
+        run: git fetch --prune --unshallow --tags 2>/dev/null || git fetch --prune --tags 2>/dev/null || true
+
+      - name: Resolve tags
+        id: get_tag
         shell: bash
         run: |
           set -euo pipefail
           if [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
+            CURRENT="${{ inputs.tag }}"
           else
-            TAG=$(git tag --list 'build/*' --sort=-creatordate | head -n1)
+            CURRENT=$(git tag --list 'build/*' --sort=-creatordate | head -n1)
           fi
-          if [ -z "${TAG:-}" ]; then
+          if [ -z "${CURRENT:-}" ]; then
             echo "::error::No build/* tag found and no 'tag' input provided."
             exit 1
           fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          PREV=$(git tag --list 'build/*' --sort=-creatordate | sed -n '2p')
+          if [ -z "${PREV:-}" ]; then
+            echo "is_first_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_first_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "new_tag=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${PREV}" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch full history and tags
-        run: git fetch --prune --unshallow --tags 2>/dev/null || git fetch --prune --tags 2>/dev/null || true
-
-      - name: Write git-cliff config (mixed commits -> single Changes group)
+      - name: Generate Release Notes
+        id: generate_notes
         shell: bash
         run: |
-          cat > cliff.toml <<'CLIFEOF'
-          [changelog]
-          header = ""
-          body = """
-          {% if version %}\
-              ## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}
-          {% else %}\
-              ## Unreleased
-          {% endif %}\
-          {% for group, commits in commits | group_by(attribute="group") %}
-              ### {{ group | upper_first }}
-              {% for commit in commits %}
-                  - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
-                      {{ commit.message | upper_first }}\
-              {% endfor %}
-          {% endfor %}\n
-          """
-          trim = true
+          set -euo pipefail
+          latest="${{ steps.get_tag.outputs.latest_tag }}"
+          current="${{ steps.get_tag.outputs.new_tag }}"
+          is_first="${{ steps.get_tag.outputs.is_first_release }}"
 
-          [git]
-          filter_unconventional = false
-          filter_commits = false
-          tag_pattern = "build/.*"
-          commit_parsers = [
-              { message = ".*", group = "Changes" },
-          ]
-          CLIFEOF
+          if [ "$is_first" = "true" ]; then
+            range=""
+          else
+            range="$latest..$current"
+          fi
 
-      - name: Generate changelog with git-cliff
-        uses: orhun/git-cliff-action@v4.8.0
-        with:
-          config: cliff.toml
-          args: --tag ${{ steps.resolve.outputs.tag }} --latest --strip all
-        env:
-          OUTPUT: CHANGELOG.md
+          commits=$(git log $range --pretty=format:"%s (%h) - @%an")
+
+          echo "## What's Changed" > notes.txt
+
+          if [ -n "$commits" ]; then
+            echo "$commits" | sed -E 's/^/- /' >> notes.txt
+          fi
+
+          if [ "$is_first" = "true" ]; then
+            echo -e "\n---\n\n📜 [Full Changelog](https://github.com/${{ github.repository }}/commits/${current})" >> notes.txt
+          else
+            echo -e "\n---\n\n📜 [Full Changelog](https://github.com/${{ github.repository }}/compare/${latest}...${current})" >> notes.txt
+          fi
 
       - name: Create GitHub Release
         if: ${{ inputs.create_release }}
-        uses: softprops/action-gh-release@v3.0.2
-        with:
-          tag_name: ${{ steps.resolve.outputs.tag }}
-          name: ${{ inputs.release_name || steps.resolve.outputs.tag }}
-          body_path: CHANGELOG.md
-          files: CHANGELOG.md
-          # Alternatywa: natywne auto-notatki GitHuba zamiast git-cliff:
-          # generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.get_tag.outputs.new_tag }}" \
+            --title "${{ inputs.release_name || steps.get_tag.outputs.new_tag }}" \
+            --notes-file notes.txt
 
       - name: Commit CHANGELOG.md to default branch
         if: ${{ inputs.update_changelog_file }}
@@ -115,10 +112,11 @@ jobs:
         run: |
           set -euo pipefail
           DEFAULT_BRANCH=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
+          cp notes.txt CHANGELOG.md
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "${DEFAULT_BRANCH}"
           git checkout "${DEFAULT_BRANCH}"
           git add CHANGELOG.md
-          git commit -m "chore: update CHANGELOG for ${{ steps.resolve.outputs.tag }}" || echo "nothing to commit"
+          git commit -m "chore: update CHANGELOG for ${{ steps.get_tag.outputs.new_tag }}" || echo "nothing to commit"
           git push origin "${DEFAULT_BRANCH}"
