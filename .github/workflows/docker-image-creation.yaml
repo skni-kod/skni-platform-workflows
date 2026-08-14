@@ -120,7 +120,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          DATE=$(date -u '+%Y%m%d')
+          DATE=$(date -u '+%Y.%m.%d')
           VERSION_NUMBER=1
 
           git config user.name "github-actions[bot]"
