@@ -1,37 +1,45 @@
-name: Docker Image Creation Workflow
+name: Docker Build
+
+# Builds and pushes a Docker image. Does NOT create any git tag – pass an
+# existing version via the `tag` input (e.g. from create-date-tag.yaml). For PR
+# validation set push: false.
 
 on:
   workflow_call:
     inputs:
       commit_id:
-        description: 'Git commit SHA used for checking out the code and tagging the image (e.g., a1b2c3d).'
+        description: 'Git commit SHA to build (e.g. a1b2c3d).'
         required: true
         type: string
       image_name:
-        description: 'The target name or tag for the Docker image (e.g., my-microservice).'
+        description: 'The target name for the Docker image (e.g. my-microservice).'
         required: true
         type: string
       dockerfile_path:
-        description: 'Path to the Dockerfile within the repository (e.g., ./Dockerfile).'
+        description: 'Path to the Dockerfile within the repository (e.g. ./Dockerfile).'
         required: false
-        default: 'Dockerfile'
+        default: Dockerfile
+        type: string
+      tag:
+        description: 'Version tag applied to the image (e.g. 2026.08.14.1).'
+        required: true
         type: string
       push:
-        description: 'Whether to push the built image to the container registry. Set to false for Pull Request validation.'
+        description: 'Whether to push the built image to the container registry.'
         required: false
         default: true
         type: boolean
       lint_dockerfile:
-        description: 'Whether to run Hadolint to validate the Dockerfile before starting the build.'
+        description: 'Whether to run Hadolint to validate the Dockerfile.'
         required: false
         default: true
         type: boolean
       target:
-        description: 'Target build stage to build for multi-stage Dockerfiles (e.g., production).'
+        description: 'Target build stage to build for multi-stage Dockerfiles.'
         required: false
         type: string
       build_args:
-        description: 'Additional build arguments passed to Docker, formatted as key=value pairs (one per line).'
+        description: 'Additional build arguments passed to Docker, key=value pairs (one per line).'
         required: false
         type: string
       provenance:
@@ -44,18 +52,17 @@ on:
         required: false
         default: false
         type: boolean
-
     secrets:
       build_secrets:
         description: 'Sensitive data (like NPM tokens) passed to the Docker build process using --mount=type=secret.'
         required: false
     outputs:
       image_tag:
-        description: 'The final tag of the generated and pushed Docker image.'
-        value: ${{ jobs.build-and-push-image.outputs.image_tag }}
+        description: 'The tag applied to the image.'
+        value: ${{ jobs.build.outputs.image_tag }}
 
 permissions:
-  contents: write
+  contents: read
   actions: read
   packages: write
   id-token: write
@@ -65,20 +72,20 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-and-push-image:
+  build:
     runs-on: self-hosted
     outputs:
       image_tag: ${{ steps.meta.outputs.version }}
     steps:
       - name: Checkout repository code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit_id }}
 
       - name: Validate input parameters
         run: |
           echo "Input parameters validation..."
-          
+
           if [[ ! "${{ inputs.commit_id }}" =~ ^[a-f0-9]{7,40}$ ]]; then
             echo "::error title=Incorrect commit_id::Parameter commit_id ('${{ inputs.commit_id }}') has incorrect format. Required hash SHA."
             exit 1
@@ -93,7 +100,7 @@ jobs:
             echo "::error title=No Dockerfile::Cannot find Dockerfile in path: '${{ inputs.dockerfile_path }}'"
             exit 1
           fi
-          
+
           echo "All parameters are correct."
 
       - name: Lint Dockerfile with Hadolint tool
@@ -114,64 +121,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate unique date version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DATE=$(date -u '+%Y.%m.%d')
-          VERSION_NUMBER=1
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          while true; do
-            VERSION="${DATE}.${VERSION_NUMBER}"
-            TAG="build/${VERSION}"
-
-            echo "Trying to reserve version: ${VERSION}"
-
-            if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
-              echo "Tag ${TAG} already exists locally."
-              VERSION_NUMBER=$((VERSION_NUMBER + 1))
-              continue
-            fi
-
-            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-              echo "Tag ${TAG} already exists remotely."
-              VERSION_NUMBER=$((VERSION_NUMBER + 1))
-              continue
-            fi
-
-            if git tag "${TAG}" "${{ inputs.commit_id }}"; then
-              if git push origin "refs/tags/${TAG}"; then
-                echo "Successfully reserved version: ${VERSION}"
-                echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-                break
-              else
-                echo "Another workflow reserved ${VERSION} first."
-                git tag -d "${TAG}" >/dev/null 2>&1 || true
-              fi
-            else
-              echo "Failed to create local tag ${TAG}."
-            fi
-
-            VERSION_NUMBER=$((VERSION_NUMBER + 1))
-
-            if [[ "${VERSION_NUMBER}" -gt 10000 ]]; then
-              echo "::error::Could not generate a unique version number."
-              exit 1
-            fi
-          done
-
       - name: Extract metadata for image
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ inputs.image_name }}
           tags: |
-            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=${{ inputs.tag }}
             type=raw,value=sha-${{ inputs.commit_id }}
             type=raw,value=latest
 

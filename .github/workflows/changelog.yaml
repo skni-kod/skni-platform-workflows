@@ -1,0 +1,124 @@
+name: Changelog / Release (reusable)
+
+# Generates a changelog between the previous build/* tag and the given (or
+# auto-detected latest) build/* tag, then creates a GitHub Release. Commit
+# messages are listed as-is – no Conventional Commits required.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to generate the changelog for (e.g. build/2026.08.14.1). Auto-detected if omitted.'
+        required: false
+        type: string
+      release_name:
+        description: 'Release title. Defaults to the tag name.'
+        required: false
+        type: string
+      create_release:
+        description: 'Create a GitHub Release with the generated changelog.'
+        required: false
+        default: true
+        type: boolean
+      update_changelog_file:
+        description: 'Commit an updated CHANGELOG.md into the default branch of the caller repo.'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve target tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(git tag --list 'build/*' --sort=-creatordate | head -n1)
+          fi
+          if [ -z "${TAG:-}" ]; then
+            echo "::error::No build/* tag found and no 'tag' input provided."
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch full history and tags
+        run: git fetch --prune --unshallow --tags 2>/dev/null || git fetch --prune --tags 2>/dev/null || true
+
+      - name: Write git-cliff config (mixed commits -> single Changes group)
+        shell: bash
+        run: |
+          cat > cliff.toml <<'CLIFEOF'
+          [changelog]
+          header = ""
+          body = """
+          {% if version %}\
+              ## {{ version }} - {{ timestamp | date(format="%Y-%m-%d") }}
+          {% else %}\
+              ## Unreleased
+          {% endif %}\
+          {% for group, commits in commits | group_by(attribute="group") %}
+              ### {{ group | upper_first }}
+              {% for commit in commits %}
+                  - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+                      {{ commit.message | upper_first }}\
+              {% endfor %}
+          {% endfor %}\n
+          """
+          trim = true
+
+          [git]
+          filter_unconventional = false
+          filter_commits = false
+          tag_pattern = "build/.*"
+          commit_parsers = [
+              { message = ".*", group = "Changes" },
+          ]
+          CLIFEOF
+
+      - name: Generate changelog with git-cliff
+        uses: orhun/git-cliff-action@v4.8.0
+        with:
+          config: cliff.toml
+          args: --tag ${{ steps.resolve.outputs.tag }} --latest --strip all
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Create GitHub Release
+        if: ${{ inputs.create_release }}
+        uses: softprops/action-gh-release@v3.0.2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          name: ${{ inputs.release_name || steps.resolve.outputs.tag }}
+          body_path: CHANGELOG.md
+          files: CHANGELOG.md
+          # Alternatywa: natywne auto-notatki GitHuba zamiast git-cliff:
+          # generate_release_notes: true
+
+      - name: Commit CHANGELOG.md to default branch
+        if: ${{ inputs.update_changelog_file }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DEFAULT_BRANCH=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${DEFAULT_BRANCH}"
+          git checkout "${DEFAULT_BRANCH}"
+          git add CHANGELOG.md
+          git commit -m "chore: update CHANGELOG for ${{ steps.resolve.outputs.tag }}" || echo "nothing to commit"
+          git push origin "${DEFAULT_BRANCH}"

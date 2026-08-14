@@ -1,0 +1,100 @@
+name: Create Date Tag (reusable)
+
+# Creates and pushes a unique date-based tag (build/YYYY.MM.DD.N) at the given
+# commit. Standalone reusable – compose it with docker-build.yaml and
+# changelog.yaml, or call it on its own.
+
+on:
+  workflow_call:
+    inputs:
+      commit_id:
+        description: 'Git commit SHA to tag (e.g. a1b2c3d).'
+        required: true
+        type: string
+      tag_prefix:
+        description: 'Prefix for the generated tag.'
+        required: false
+        default: build
+        type: string
+    outputs:
+      tag:
+        description: 'Full tag, e.g. build/2026.08.14.1'
+        value: ${{ jobs.create-tag.outputs.tag }}
+      version:
+        description: 'Raw version, e.g. 2026.08.14.1'
+        value: ${{ jobs.create-tag.outputs.version }}
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_id }}
+          fetch-depth: 0
+
+      - name: Validate commit_id
+        run: |
+          if [[ ! "${{ inputs.commit_id }}" =~ ^[a-f0-9]{7,40}$ ]]; then
+            echo "::error title=Incorrect commit_id::Parameter commit_id ('${{ inputs.commit_id }}') has incorrect format. Required hash SHA."
+            exit 1
+          fi
+
+      - name: Generate unique date version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DATE=$(date -u '+%Y.%m.%d')
+          VERSION_NUMBER=1
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          while true; do
+            VERSION="${DATE}.${VERSION_NUMBER}"
+            TAG="${{ inputs.tag_prefix }}/${VERSION}"
+
+            echo "Trying to reserve version: ${VERSION}"
+
+            if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} already exists locally."
+              VERSION_NUMBER=$((VERSION_NUMBER + 1))
+              continue
+            fi
+
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} already exists remotely."
+              VERSION_NUMBER=$((VERSION_NUMBER + 1))
+              continue
+            fi
+
+            if git tag "${TAG}" "${{ inputs.commit_id }}"; then
+              if git push origin "refs/tags/${TAG}"; then
+                echo "Successfully reserved version: ${VERSION}"
+                echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+                echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+                break
+              else
+                echo "Another workflow reserved ${VERSION} first."
+                git tag -d "${TAG}" >/dev/null 2>&1 || true
+              fi
+            else
+              echo "Failed to create local tag ${TAG}."
+            fi
+
+            VERSION_NUMBER=$((VERSION_NUMBER + 1))
+
+            if [[ "${VERSION_NUMBER}" -gt 10000 ]]; then
+              echo "::error::Could not generate a unique version number."
+              exit 1
+            fi
+          done
