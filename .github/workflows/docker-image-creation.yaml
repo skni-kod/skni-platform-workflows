@@ -37,12 +37,12 @@ on:
       provenance:
         description: 'Whether to generate provenance attestation.'
         required: false
-        default: true
+        default: false
         type: boolean
       sbom:
         description: 'Whether to generate SBOM attestation.'
         required: false
-        default: true
+        default: false
         type: boolean
 
     secrets:
