@@ -34,6 +34,17 @@ on:
         description: 'Additional build arguments passed to Docker, formatted as key=value pairs (one per line).'
         required: false
         type: string
+      provenance:
+        description: 'Whether to generate provenance attestation.'
+        required: false
+        default: true
+        type: boolean
+      sbom:
+        description: 'Whether to generate SBOM attestation.'
+        required: false
+        default: true
+        type: boolean
+
     secrets:
       build_secrets:
         description: 'Sensitive data (like NPM tokens) passed to the Docker build process using --mount=type=secret.'
@@ -148,5 +159,5 @@ jobs:
           secrets: ${{ secrets.build_secrets }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
+          provenance: ${{ inputs.provenance }}
+          sbom: ${{ inputs.sbom }}
