@@ -3,9 +3,9 @@ name: Docker Image Creation Workflow
 on:
   workflow_call:
     inputs:
-      commit_id: 
+      commit_id:
         description: 'Git commit SHA used for checking out the code and tagging the image (e.g., a1b2c3d).'
-        required: true 
+        required: true
         type: string
       image_name:
         description: 'The target name or tag for the Docker image (e.g., my-microservice).'
@@ -16,7 +16,7 @@ on:
         required: false
         default: 'Dockerfile'
         type: string
-      push: 
+      push:
         description: 'Whether to push the built image to the container registry. Set to false for Pull Request validation.'
         required: false
         default: true
@@ -55,7 +55,7 @@ on:
         value: ${{ jobs.build-and-push-image.outputs.image_tag }}
 
 permissions:
-  contents: read
+  contents: write
   actions: read
   packages: write
   id-token: write
@@ -114,28 +114,56 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate date version
+      - name: Generate unique date version
         id: version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          DATE=$(date -u '+%Y.%m.%d')
+          set -euo pipefail
 
-          RUNS_TODAY=$(gh run list \
-            --workflow="${{ github.workflow }}" \
-            --repo="${{ github.repository }}" \
-            --created="$(date -u '+%Y-%m-%d')" \
-            --status=completed \
-            --limit 1000 \
-            --json databaseId \
-            --jq 'length')
+          DATE=$(date -u '+%Y%m%d')
+          VERSION_NUMBER=1
 
-          VERSION_NUMBER=$((RUNS_TODAY + 1))
-          VERSION="${DATE}.${VERSION_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          echo "Generated version: ${VERSION}"
+          while true; do
+            VERSION="${DATE}.${VERSION_NUMBER}"
+            TAG="build/${VERSION}"
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "Trying to reserve version: ${VERSION}"
+
+            if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} already exists locally."
+              VERSION_NUMBER=$((VERSION_NUMBER + 1))
+              continue
+            fi
+
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "Tag ${TAG} already exists remotely."
+              VERSION_NUMBER=$((VERSION_NUMBER + 1))
+              continue
+            fi
+
+            if git tag "${TAG}" "${{ inputs.commit_id }}"; then
+              if git push origin "refs/tags/${TAG}"; then
+                echo "Successfully reserved version: ${VERSION}"
+                echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+                break
+              else
+                echo "Another workflow reserved ${VERSION} first."
+                git tag -d "${TAG}" >/dev/null 2>&1 || true
+              fi
+            else
+              echo "Failed to create local tag ${TAG}."
+            fi
+
+            VERSION_NUMBER=$((VERSION_NUMBER + 1))
+
+            if [[ "${VERSION_NUMBER}" -gt 10000 ]]; then
+              echo "::error::Could not generate a unique version number."
+              exit 1
+            fi
+          done
 
       - name: Extract metadata for image
         id: meta
