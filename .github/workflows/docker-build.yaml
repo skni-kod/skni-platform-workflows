@@ -73,7 +73,7 @@ env:
 
 jobs:
   build:
-    runs-on: self-hosted
+    runs-on: github-runner-2
     outputs:
       image_tag: ${{ steps.meta.outputs.version }}
     steps:
