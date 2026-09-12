@@ -98,7 +98,7 @@ jobs:
       build_secrets: ${{ secrets.build_secrets }}
 
   changelog:
-    needs: tag
+    needs: [tag, build]
     if: ${{ inputs.create_release }}
     uses: ./.github/workflows/changelog.yaml
     with:
