@@ -1,27 +1,23 @@
-name: Create Date Tag (reusable)
-
-# Creates and pushes a unique date-based tag (build/YYYY.MM.DD.N) at the given
-# commit. Standalone reusable – compose it with docker-build.yaml and
-# changelog.yaml, or call it on its own.
+name: Create tag
 
 on:
   workflow_call:
     inputs:
       commit_id:
-        description: 'Git commit SHA to tag (e.g. a1b2c3d).'
+        description: "Git commit SHA to tag (e.g. a1b2c3d)."
         required: true
         type: string
       tag_prefix:
-        description: 'Prefix for the generated tag.'
+        description: "Prefix for the generated tag."
         required: false
         default: build
         type: string
     outputs:
       tag:
-        description: 'Full tag, e.g. build/2026.08.14.1'
+        description: "Full tag, e.g. build/2026.08.14.1"
         value: ${{ jobs.create-tag.outputs.tag }}
       version:
-        description: 'Raw version, e.g. 2026.08.14.1'
+        description: "Raw version, e.g. 2026.08.14.1"
         value: ${{ jobs.create-tag.outputs.version }}
 
 permissions:

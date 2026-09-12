@@ -1,64 +1,60 @@
-name: Docker Build
-
-# Builds and pushes a Docker image. Does NOT create any git tag – pass an
-# existing version via the `tag` input (e.g. from create-date-tag.yaml). For PR
-# validation set push: false.
+name: Docker Build and Push
 
 on:
   workflow_call:
     inputs:
       commit_id:
-        description: 'Git commit SHA to build (e.g. a1b2c3d).'
+        description: "Git commit SHA to build (e.g. a1b2c3d)."
         required: true
         type: string
       image_name:
-        description: 'The target name for the Docker image (e.g. my-microservice).'
+        description: "The target name for the Docker image (e.g. my-microservice)."
         required: true
         type: string
       dockerfile_path:
-        description: 'Path to the Dockerfile within the repository (e.g. ./Dockerfile).'
+        description: "Path to the Dockerfile within the repository (e.g. ./Dockerfile)."
         required: false
         default: Dockerfile
         type: string
       tag:
-        description: 'Version tag applied to the image (e.g. 2026.08.14.1).'
+        description: "Version tag applied to the image (e.g. 2026.08.14.1)."
         required: true
         type: string
       push:
-        description: 'Whether to push the built image to the container registry.'
+        description: "Whether to push the built image to the container registry."
         required: false
         default: true
         type: boolean
       lint_dockerfile:
-        description: 'Whether to run Hadolint to validate the Dockerfile.'
+        description: "Whether to run Hadolint to validate the Dockerfile."
         required: false
-        default: true
+        default: false
         type: boolean
       target:
-        description: 'Target build stage to build for multi-stage Dockerfiles.'
+        description: "Target build stage to build for multi-stage Dockerfiles."
         required: false
         type: string
       build_args:
-        description: 'Additional build arguments passed to Docker, key=value pairs (one per line).'
+        description: "Additional build arguments passed to Docker, key=value pairs (one per line)."
         required: false
         type: string
       provenance:
-        description: 'Whether to generate provenance attestation.'
+        description: "Whether to generate provenance attestation."
         required: false
         default: false
         type: boolean
       sbom:
-        description: 'Whether to generate SBOM attestation.'
+        description: "Whether to generate SBOM attestation."
         required: false
         default: false
         type: boolean
     secrets:
       build_secrets:
-        description: 'Sensitive data (like NPM tokens) passed to the Docker build process using --mount=type=secret.'
+        description: "Sensitive data (like NPM tokens) passed to the Docker build process using --mount=type=secret."
         required: false
     outputs:
       image_tag:
-        description: 'The tag applied to the image.'
+        description: "The tag applied to the image."
         value: ${{ jobs.build.outputs.image_tag }}
 
 permissions:

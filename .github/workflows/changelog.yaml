@@ -1,29 +1,23 @@
 name: Changelog / Release (reusable)
 
-# Generates a changelog between the previous build/* tag and the given (or
-# auto-detected latest) build/* tag, then creates a GitHub Release. Commit
-# messages are listed as-is (no Conventional Commits required). The release
-# notes include a "Full Changelog" link that compares the previous and current
-# tag, so clicking the tag shows what changed between the two.
-
 on:
   workflow_call:
     inputs:
       tag:
-        description: 'Tag to generate changelog for (e.g. build/2026.08.14.1). Auto-detected if omitted.'
+        description: "Tag to generate changelog for (e.g. build/2026.08.14.1). Auto-detected if omitted."
         required: false
         type: string
       release_name:
-        description: 'Release title. Defaults to the tag name.'
+        description: "Release title. Defaults to the tag name."
         required: false
         type: string
       create_release:
-        description: 'Create a GitHub Release with the generated changelog.'
+        description: "Create a GitHub Release with the generated changelog."
         required: false
         default: true
         type: boolean
       update_changelog_file:
-        description: 'Commit an updated CHANGELOG.md into the default branch of the caller repo.'
+        description: "Commit an updated CHANGELOG.md into the default branch of the caller repo."
         required: false
         default: false
         type: boolean
@@ -69,6 +63,8 @@ jobs:
       - name: Generate Release Notes
         id: generate_notes
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           latest="${{ steps.get_tag.outputs.latest_tag }}"
@@ -81,13 +77,25 @@ jobs:
             range="$latest..$current"
           fi
 
-          commits=$(git log $range --pretty=format:"%s (%h) - @%an")
-
           echo "## What's Changed" > notes.txt
 
-          if [ -n "$commits" ]; then
-            echo "$commits" | sed -E 's/^/- /' >> notes.txt
-          fi
+          declare -A author_cache
+
+          while IFS=$'\t' read -r sha short subject email name; do
+            [ -n "$sha" ] || continue
+            if [ -n "${author_cache[$email]+set}" ]; then
+              author="${author_cache[$email]}"
+            else
+              login=$(gh api "repos/${{ github.repository }}/commits/${sha}" --jq '.author.login // empty' 2>/dev/null || true)
+              if [ -n "$login" ]; then
+                author="@${login}"
+              else
+                author="$name"
+              fi
+              author_cache[$email]="$author"
+            fi
+            echo "- ${subject} (${short}) - ${author}" >> notes.txt
+          done < <(git log $range --pretty=tformat:"%H%x09%h%x09%s%x09%ae%x09%an")
 
           if [ "$is_first" = "true" ]; then
             echo -e "\n---\n\n📜 [Full Changelog](https://github.com/${{ github.repository }}/commits/${current})" >> notes.txt
